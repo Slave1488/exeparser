@@ -5,3 +5,4 @@
 .coverage
 
 *.exe
+test_script.py
