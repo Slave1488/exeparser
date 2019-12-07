@@ -1,4 +1,5 @@
 import re
+import pyperclip
 
 M = re.compile(r'(?<!^).{0}(?=[A-Z])')
 
@@ -8,4 +9,4 @@ def rename(name):
 
 
 while True:
-    print(rename(input()))
+    pyperclip.copy(rename(input()))

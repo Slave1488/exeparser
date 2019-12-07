@@ -1,40 +1,71 @@
 import const
+from enum import Enum, auto
 
 
-class Byte:
+class ObjectC:
     def __init__(self, source):
-        self.val = source.read(1)
+        self.start = source.tell()
+
+
+class Byte(ObjectC):
+    SIZE = const(1)
+
+    def __init__(self, source):
+        super().__init__(source)
+        self.val = source.read(self.SIZE)
+
+    def __len__(self):
+        return Byte.SIZE
 
     def __int__(self):
         return int.from_bytes(self.val, 'little')
 
 
-class Word:
+class Word(ObjectC):
+    SIZE = const(2 * Byte.SIZE)
+
     def __init__(self, source):
-        self.val = Byte(source).val + Byte(source).val
+        super().__init__(source)
+        self.val = source.read(self.SIZE)
+
+    def __len__(self):
+        return Word.SIZE
 
     def __int__(self):
         return int.from_bytes(self.val, 'little')
 
 
-class DWord:
+class DWord(ObjectC):
+    SIZE = const(2 * Word.SIZE)
+
     def __init__(self, source):
-        self.val = Word(source).val + Word(source).val
+        super().__init__(source)
+        self.val = source.read(self.SIZE)
+
+    def __len__(self):
+        return DWord.SIZE
 
     def __int__(self):
         return int.from_bytes(self.val, 'little')
 
 
-class ULongLong:
+class ULongLong(ObjectC):
+    SIZE = const(2 * DWord.SIZE)
+
     def __init__(self, source):
-        self.val = DWord(source).val + DWord(source).val
+        super().__init__(source)
+        self.val = source.read(self.SIZE)
+
+    def __len__(self):
+        return ULongLong.SIZE
 
     def __int__(self):
         return int.from_bytes(self.val, 'little')
 
 
-class DOSHeader:
+class DOSHeader(ObjectC):
     def __init__(self, source):
+        super().__init__(source)
         self.magic = Word(source)
         self.cblp = Word(source)
         self.cp = Word(source)
@@ -56,13 +87,15 @@ class DOSHeader:
         self.lfanew = DWord(source)
 
 
-class DOSStub:
-    def __init__(self, source, len=192):
-        self.val = source.read(len)
+class DOSStub(ObjectC):
+    def __init__(self, source, end=256):
+        super().__init__(source)
+        self.val = source.read(end - self.start)
 
 
-class FileHeader:
+class FileHeader(ObjectC):
     def __init__(self, source):
+        super().__init__(source)
         self.machine = Word(source)
         self.number_of_sections = Word(source)
         self.time_date_stamp = DWord(source)
@@ -72,17 +105,24 @@ class FileHeader:
         self.characteristics = Word(source)
 
 
-class DataDirectory:
+class DataDirectory(ObjectC):
     def __init__(self, source):
+        super().__init__(source)
         self.virtual_address = DWord(source)
         self.size = DWord(source)
 
 
-class OptionalHeader:
+class OptionalHeader(ObjectC):
     IMAGE_ROM_OPTIONAL_HDR_MAGIC = const(0x0107)
     IMAGE_NT_OPTIONAL_HDR32_MAGIC = const(0x010B)
     IMAGE_NT_OPTIONAL_HDR64_MAGIC = const(0x020B)
-    PE32, PE32p = map(const, range(1, 3))
+
+    class Format(Enum):
+        def _generate_next_value_(name, start, count, last_values):
+            return name
+
+        PE32 = auto()
+        PE32p = auto()
 
     @property
     def magic(self):
@@ -92,19 +132,20 @@ class OptionalHeader:
     def magic(self, val):
         OH = OptionalHeader
         ival = int(val)
-        if ival == OH.IMAGE_NT_OPTIONAL_HDR32_MAGIC:
+        if ival == OH.IMAGE_ROM_OPTIONAL_HDR_MAGIC:
             raise ValueError('OptionalHeader.magic is \
 IMAGE_ROM_OPTIONAL_HDR_MAGIC')
         elif (ival == OH.IMAGE_NT_OPTIONAL_HDR32_MAGIC or
               ival == OH.IMAGE_NT_OPTIONAL_HDR64_MAGIC):
             self._format = (
-                ival == OH.IMAGE_NT_OPTIONAL_HDR32_MAGIC and OH.PE32 or
-                ival == OH.IMAGE_NT_OPTIONAL_HDR64_MAGIC and OH.PE32p)
+                ival == OH.IMAGE_NT_OPTIONAL_HDR32_MAGIC and OH.Format.PE32 or
+                ival == OH.IMAGE_NT_OPTIONAL_HDR64_MAGIC and OH.Format.PE32p)
             self.__magic = val
         else:
             raise ValueError('Unknown OptionalHeader.magic')
 
     def __init__(self, source):
+        super().__init__(source)
         OH = OptionalHeader
         self.magic = Word(source)
         self.major_linker_version = Byte(source)
@@ -114,10 +155,11 @@ IMAGE_ROM_OPTIONAL_HDR_MAGIC')
         self.size_of_uninitialized_data = DWord(source)
         self.address_of_entry_point = DWord(source)
         self.base_of_code = DWord(source)
-        self.base_of_data = self._format == OH.PE32 and DWord(source) or None
+        self.base_of_data = (
+            self._format == OH.Format.PE32 and DWord(source) or None)
         self.image_base = (
-            self._format == OH.PE32 and DWord(source) or
-            self._format == OH.PE32p and ULongLong(source))
+            self._format == OH.Format.PE32 and DWord(source) or
+            self._format == OH.Format.PE32p and ULongLong(source))
         self.section_alignment = DWord(source)
         self.file_alignment = DWord(source)
         self.major_operating_system_version = Word(source)
@@ -133,17 +175,17 @@ IMAGE_ROM_OPTIONAL_HDR_MAGIC')
         self.subsystem = Word(source)
         self.dll_characteristics = Word(source)
         self.size_of_stack_reserve = (
-            self._format == OH.PE32 and DWord(source) or
-            self._format == OH.PE32p and ULongLong(source))
+            self._format == OH.Format.PE32 and DWord(source) or
+            self._format == OH.Format.PE32p and ULongLong(source))
         self.size_of_stack_commit = (
-            self._format == OH.PE32 and DWord(source) or
-            self._format == OH.PE32p and ULongLong(source))
+            self._format == OH.Format.PE32 and DWord(source) or
+            self._format == OH.Format.PE32p and ULongLong(source))
         self.size_of_heap_reserve = (
-            self._format == OH.PE32 and DWord(source) or
-            self._format == OH.PE32p and ULongLong(source))
+            self._format == OH.Format.PE32 and DWord(source) or
+            self._format == OH.Format.PE32p and ULongLong(source))
         self.size_of_heap_commit = (
-            self._format == OH.PE32 and DWord(source) or
-            self._format == OH.PE32p and ULongLong(source))
+            self._format == OH.Format.PE32 and DWord(source) or
+            self._format == OH.Format.PE32p and ULongLong(source))
         self.loader_flags = DWord(source)
         self.number_of_rva_and_sizes = DWord(source)
         self.data_directory = [
@@ -151,16 +193,59 @@ IMAGE_ROM_OPTIONAL_HDR_MAGIC')
             for i in range(int(self.number_of_rva_and_sizes))]
 
 
-class NTHeader:
+class NTHeader(ObjectC):
     def __init__(self, source):
+        super().__init__(source)
         self.signature = DWord(source)
         self.file_header = FileHeader(source)
         self.optional_header = OptionalHeader(source)
 
 
-class Header:
+class SectionHeader(ObjectC):
+    IMAGE_SIZEOF_SHORT_NAME = const(8)
+
+    @property
+    def misc_virtual_size(self):
+        return self.misc
+
+    @property
+    def misc_physical_address(self):
+        return self.misc
+
     def __init__(self, source):
+        super().__init__(source)
+        SH = SectionHeader
+        self.name = [Byte(source) for i in range(SH.IMAGE_SIZEOF_SHORT_NAME)]
+        self.misc = DWord(source)
+        self.virtual_address = DWord(source)
+        self.size_of_raw_data = DWord(source)
+        self.pointer_to_raw_data = DWord(source)
+        self.pointer_to_relocations = DWord(source)
+        self.pointer_to_linenumbers = DWord(source)
+        self.number_of_relocations = Word(source)
+        self.number_of_linenumbers = Word(source)
+        self.characteristics = DWord(source)
+
+
+class Header(ObjectC):
+    def __init__(self, source):
+        super().__init__(source)
         self.dos_header = DOSHeader(source)
-        self.dos_stub = DOSStub(
-            source, int(self.dos_header.lfanew) - source.tell())
+        self.dos_stub = DOSStub(source, int(self.dos_header.lfanew))
         self.nt_header = NTHeader(source)
+        self.section_headers = [
+            SectionHeader(source)
+            for i in range(int(self.nt_header.file_header.number_of_sections))]
+
+
+class Section(ObjectC):
+    def to_first_section(source, nt_header):
+        source.seek(
+            nt_header.optional_header.start +
+            int(nt_header.file_header.size_of_optional_header))
+
+    def __init__(self, source, section_header):
+        super().__init__(source)
+        self.header = section_header
+        source.seek(int(section_header.pointer_to_raw_data))
+        self.data = source.read(int(section_header.size_of_raw_data))
